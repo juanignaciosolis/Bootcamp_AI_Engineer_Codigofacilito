@@ -24,13 +24,16 @@ tools = [
         "type": "function",
         "function": {
             "name": "buscar_servicio",
-            "description": "Busca servicios/tratamientos en el catálogo por categoría, subcategoria, nombre descripcion y el precio",
+            "description": "Busca servicios/tratamientos en el catálogo por categoría, subcategoria o por nombre, descripcion y el precio",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
-                        "type": "string",
-                        "description": "Término de búsqueda del servicio/tratamiento.",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Lista de 3 terminos de busqueda relacionados al servicio/tratamiento",
                     },
                     "precio": {
                         "type": "number",
@@ -44,7 +47,7 @@ tools = [
                         "description": "Categoría del servicio/tratamiento.",
                     },
                     "subcategoria": {
-                        "type": "string",
+                        "type": ["string","null"],
                         "enum": ["Reduccion/ Celulitis", "Flacidez/ Tonificacion", 
                                  "Estrías, exfoliaciones y blanqueamientos", 
                                  "Piernas cansadas / Retención de líquidos", 
@@ -56,17 +59,17 @@ tools = [
                     }                   
                     
                 },
-                "required": ["categoria","query"],
+                "required": ["query"],
             },
         },
     }
 ]
 
-
+s
 # --- Función ---
 def buscar_servicios(
     query: str,
-    categoria: str,
+    categoria: str | None = None,
     subcategoria: str | None = None,
     precio: float | None = None,
     duracion: int | None = None,
@@ -75,22 +78,29 @@ def buscar_servicios(
     
     df = pd.read_csv(url, thousands=".")
 
-    # 🔥 1. FILTRO BASE (SIEMPRE)
-    resultados = df[df["categoria"] == categoria]
+    # 🔥 1. FILTRO CATEGORIA
+    if categoria:
+        resultados = df[df["categoria"] == categoria]
+    else:
+        resultados = df.copy()
 
     # 🔍 2. QUERY (con seguro)
     if query:
-        query_lower = query.lower()
+    # normalizar términos
+        queries_lower = [q.lower() for q in query]
 
         temp = resultados[
             resultados.apply(
-                lambda row: query_lower in " ".join(map(str, row.values)).lower(),
+                lambda row: any(
+                    q in " ".join(map(str, row.values)).lower()
+                    for q in queries_lower
+                ),
                 axis=1
             )
         ]
 
-        if not temp.empty:
-            resultados = temp
+    if not temp.empty:
+        resultados = temp
 
     # 📂 3. SUBCATEGORIA (con seguro)
     if subcategoria:
@@ -113,13 +123,13 @@ def buscar_servicios(
         if not temp.empty:
             resultados = temp
 
-    return resultados.to_dict(orient="records")
+    return resultados[["nombre","precio","duracion"]].to_dict(orient="records")
 
 
 # === PASO 1: Enviar mensaje + tools al modelo ===
 print("=== Paso 1: Enviando mensaje al modelo ===")
 messages = [
-    {"role": "system", "content": "Quiero que actues como una secretaria de una estetica. tu mision es recomendar y vender servicios y tratamiento personalizados. Responde de forma resumida y desestructurada sin abrumar de detalles al cliente"},
+    {"role": "system", "content": "Tu mision es recomendar y vender servicios y tratamiento esteticos personalizados. Si la categoria del servicio/tratamiento no está clara, NO incluir el campo 'categoria' en la llamada a la tool."},
     {"role": "user", "content": input("Hazme tu consulta: ")}
 ]
 
