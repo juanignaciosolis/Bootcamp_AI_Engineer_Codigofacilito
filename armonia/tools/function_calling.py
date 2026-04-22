@@ -65,7 +65,7 @@ tools = [
     }
 ]
 
-s
+
 # --- Función ---
 def buscar_servicios(
     query: str,
