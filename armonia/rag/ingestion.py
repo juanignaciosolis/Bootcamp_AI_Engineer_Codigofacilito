@@ -88,79 +88,146 @@ from typing import List
 def infer_metadata(section_text: str) -> dict:
     text = section_text.lower()
 
-    # tipo general
-    if "faq" in text:
+    # priorizar título
+    title = text.split("\n")[0]
+
+    if "faq" in title or "?" in text:
         tipo = "faq"
-    elif "concept" in text or "tecnolog" in text:
+
+    elif "contraindic" in title:
+        tipo = "contraindicaciones"
+
+    elif "beneficio" in title:
+        tipo = "beneficios"
+
+    elif "pago" in title or "cuota" in text:
+        tipo = "pagos"
+
+    elif "combo" in title or "promo" in title:
+        tipo = "combos"
+
+    elif "concept" in title or "tecnolog" in title:
         tipo = "concepto"
-    elif "combo" in text or "pago" in text:
-        tipo = "comercial"
+
+    elif "cuidado" in title:
+        tipo = "cuidados"
+
     else:
         tipo = "general"
 
-    # tema más específico
-    if "turno" in text:
-        tema = "turnos"
-    elif "pago" in text or "cuota" in text:
-        tema = "pagos"
-    elif "cuidado" in text or "previo" in text:
-        tema = "cuidados"
-    elif "contraindic" in text:
-        tema = "contraindicaciones"
-    elif "radiofrecuencia" in text:
-        tema = "radiofrecuencia"
-    elif "ipl" in text:
-        tema = "ipl"
-    elif "dermapen" in text:
-        tema = "dermapen"
-    else:
-        tema = "general"
-
-    # keywords simples
-    keywords = []
-    for word in ["turno", "pago", "cuotas", "tratamiento", "piel", "sesiones"]:
-        if word in text:
-            keywords.append(word)
-
-    return {
-        "tipo": tipo,
-        "tema": tema,
-        "keywords": keywords,
-    }
+    return {"tipo": tipo}
 
 
 def chunk_by_sections(
     doc,
     max_chunk_size: int = 800,
 ) -> List["Chunk"]:
-    """
-    Chunking por secciones + metadata enriquecida
-    """
+
+    import re
 
     text = doc.content
 
-    # Detectar secciones (títulos en mayúsculas + ===)
-    section_pattern = re.compile(r"(?:^|\n)([A-ZÁÉÍÓÚÑ\s]{5,}\n=+\n)", re.MULTILINE)
-    splits = section_pattern.split(text)
+    # 🔹 limpieza inicial
+    text = re.sub(r"\r\n", "\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
 
+    lines = text.split("\n")
+
+    sections = []
+    current_title = None
+    current_content = []
+
+    def is_section_title(line: str, next_line: str):
+        return bool(line.strip()) and set(next_line.strip()) == {"="}
+
+    # 🔹 detectar secciones reales (solo con =====)
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+
+        if is_section_title(line, next_line):
+            if current_title:
+                content = "\n".join(current_content)
+                content = re.sub(r"\n{3,}", "\n\n", content).strip()
+                sections.append((current_title, content))
+
+            current_title = line
+            current_content = []
+            i += 2  # saltar =====
+            continue
+
+        if set(line) == {"="}:
+            i += 1
+            continue
+
+        current_content.append(lines[i])
+        i += 1
+
+    # última sección
+    if current_title:
+        content = "\n".join(current_content)
+        content = re.sub(r"\n{3,}", "\n\n", content).strip()
+        sections.append((current_title, content))
+
+    # 🔹 chunking
     chunks = []
     chunk_index = 0
 
-    sections = []
-    for i in range(1, len(splits), 2):
-        title = splits[i].strip()
-        content = splits[i + 1].strip() if i + 1 < len(splits) else ""
-        sections.append((title, content))
-
     for title, content in sections:
+
+        # =========================================================
+        # 🔥 CASO ESPECIAL: CONCEPTOS Y TECNOLOGIAS
+        # =========================================================
+        if "CONCEPTOS Y TECNOLOGIAS" in title.upper():
+
+            # split por tratamientos (líneas mayúsculas)
+            parts = re.split(r"\n(?=[A-ZÁÉÍÓÚÑ\s\/\(\)]+(?:\n|$))", content)
+
+            for part in parts:
+                part = part.strip()
+
+                # evitar ruido (bloques muy chicos)
+                if not part or len(part) < 20:
+                    continue
+
+                chunk_text = f"{title}\n{part}"
+
+                chunk_text = re.sub(r"\n{3,}", "\n\n", chunk_text)
+                chunk_text = re.sub(r"[ \t]+", " ", chunk_text).strip()
+
+                chunks.append(
+                    Chunk(
+                        content=chunk_text,
+                        metadata={
+                            **doc.metadata,
+                            "chunk_index": chunk_index,
+                            "section": title.strip(),
+                            "tipo": "concepto",  # 🔥 forzado correcto
+                        },
+                    )
+                )
+                chunk_index += 1
+
+            continue  # 🔥 NO seguir con lógica normal
+
+        # =========================================================
+        # 🔹 LÓGICA NORMAL
+        # =========================================================
+
         section_full = f"{title}\n{content}"
+
+        section_full = re.sub(r"\n?=+\n?", "\n", section_full)
+        section_full = re.sub(r"\n{3,}", "\n\n", section_full)
+        section_full = re.sub(r"[ \t]+", " ", section_full).strip()
 
         base_metadata = infer_metadata(section_full)
 
         if len(section_full) <= max_chunk_size:
             chunks.append(
                 Chunk(
-                    content=section_full.strip(),
+                    content=section_full,
                     metadata={
                         **doc.metadata,
                         "chunk_index": chunk_index,
@@ -170,19 +237,24 @@ def chunk_by_sections(
                 )
             )
             chunk_index += 1
+
         else:
             paragraphs = content.split("\n\n")
             current = ""
 
             for p in paragraphs:
                 p = p.strip()
+                p = re.sub(r"[ \t]+", " ", p)
+
                 if not p:
                     continue
 
                 if len(current) + len(p) + 2 > max_chunk_size:
+                    chunk_text = f"{title}\n{current}".strip()
+
                     chunks.append(
                         Chunk(
-                            content=f"{title}\n{current}".strip(),
+                            content=chunk_text,
                             metadata={
                                 **doc.metadata,
                                 "chunk_index": chunk_index,
@@ -197,9 +269,11 @@ def chunk_by_sections(
                     current += "\n\n" + p if current else p
 
             if current:
+                chunk_text = f"{title}\n{current}".strip()
+
                 chunks.append(
                     Chunk(
-                        content=f"{title}\n{current}".strip(),
+                        content=chunk_text,
                         metadata={
                             **doc.metadata,
                             "chunk_index": chunk_index,

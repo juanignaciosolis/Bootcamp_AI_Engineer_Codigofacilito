@@ -27,10 +27,11 @@ client = OpenAI(
 MODEL = "openai/gpt-oss-120b"
 
 
-def rag_query(collection, question: str) -> tuple[str, list]:
+def rag_query(collection, question: str, metadata: dict = None) -> tuple[str, list]:
     """Ejecuta una query RAG: retrieve + generate. Retorna (respuesta, resultados)."""
     # 1. Retrieve
-    results = search(collection, question, n_results=3)
+
+    results = search(collection, question, n_results=3, where = metadata)
 
     # 2. Construir contexto
     context = "\n\n---\n\n".join(
@@ -83,8 +84,8 @@ def pause(msg: str = "Presiona Enter para continuar...") -> None:
 
 def main() -> None:
     # Limpiar base de datos anterior para empezar limpio
-    if os.path.exists("./chroma_db"):
-        shutil.rmtree("./chroma_db")
+    ##if os.path.exists("./chroma_db"):
+        ##shutil.rmtree("./chroma_db")
 
     # Paso 1: Cargar documentos
     print(f"\n{CYAN}{BOLD}{'=' * 80}")
@@ -124,20 +125,26 @@ def main() -> None:
 
     # Paso 4: Queries RAG
     queries = [
-        input("hazme una consulta 1: "),
-        input("hazme una consulta 2: "),
-        input("hazme una consulta 3: "),
-        input("hazme una consulta 4: "),
-        input("hazme una consulta 5: "),
-        input("hazme una consulta 6: ")
+        "Tienen combos de tratamientos?",
+        "Como debo asistir al turno?",
+        "Que tratamientos recomiendan para embarazo",
+        "Que es la IPL?"
     ]
 
-    for i, question in enumerate(queries, 1):
+    metadata = [
+        {"tipo": "pagos"},
+        {"tipo": "faq"},
+        {"tipo": "contraindicaciones"},
+        {"tipo": "concepto"}
+    ]
+
+    for i, (question, metadata) in enumerate(zip(queries, metadata), 1):
+        print(i, question, metadata)
         print(f"\n{CYAN}{BOLD}{'=' * 80}")
         print(f"QUERY {i}/{len(queries)}: {question}")
         print(f"{'=' * 80}{RESET}")
 
-        answer, results = rag_query(collection, question)
+        answer, results = rag_query(collection, question, metadata)
 
         print(f"\n{YELLOW}{BOLD}Chunks recuperados:{RESET}")
         for j, r in enumerate(results, 1):
@@ -153,7 +160,7 @@ def main() -> None:
     pause("Enter para la prueba anti-alucinación...")
 
     # Paso 5: Query anti-alucinación
-    question_no_answer = "¿Cuál es la política de stock options para empleados de NovaTech?"
+    question_no_answer = "Quiero una crema hidratante"
 
     print(f"\n{RED}{BOLD}{'=' * 80}")
     print(f"QUERY ANTI-ALUCINACION: {question_no_answer}")
